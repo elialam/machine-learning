@@ -1,0 +1,161 @@
+---
+title: "Practical Machine Learning Assignment"
+output: 
+  html_document:
+    keep_md: true
+---
+### SYNOPSIS:
+
+One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, my goal is to predict the manner in which the participants in a series of excercises did the exercise(this is the "classe" variable in the training set). I use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to predict with.The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. I try different models and use cross validation to test the models and based on accuracy and out of sample error rates of the models I choose the best prediction model to apply on testing set and predict 20 different test cases.
+
+In the begining I am going to load all the required packages as well as preparing R environment.
+```{r}
+library(knitr)
+library(caret)
+opts_chunk$set(echo=TRUE,cache=TRUE)
+setwd("d:\\datascience\\practicalmachinelearning\\Assignment")
+
+```
+
+### Loading training data into R
+
+In this stage I am just going to download and read training data,and leave the testing data for last stage when I want to get the final results out of my most accurate model.
+```{r}
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",destfile = "pml_training.csv")
+pml_training<-read.csv("pml_training.csv",na.strings = c("","NA"))
+str(pml_training,list.len = 20)
+```
+
+##preprocessing data
+
+As we can see from above table,there are 160 variables and many of them are  unnecessary for prediction such as cuolumns with many NAs or high correlation variable.Therefore I will clean the data in different steps.
+First I want to know how many columns are complete and without any NA.First I figure out the number of NAs in columns and then remove the columns with mostly NAs.
+
+```{r}
+num_NA_per_col<-colSums(is.na(pml_training))
+num_NA_per_col
+sum_col_with_NA<-sum(colSums(is.na(pml_training))!=0)
+sum_col_with_NA
+```
+
+I can see from information above that columns either have 0 NA or 19216 NAs,and altogether there are 100 columns with mostly NA values.Therefore, I easily remove all the columns with  NA values.
+
+```{r}
+pml_training1<-pml_training[,colSums(is.na(pml_training))==0]
+dim(pml_training1)
+head(pml_training1,n=4)
+```
+From table above we can see the first few variables include data about users' name and tiem of getting data and etc.So I remove the culomns which values are not useful in prediction models.
+```{r}
+pml_training2<-pml_training1[,-(1:7)]
+dim(pml_training2)
+```
+
+Now lets remove predictors which are highly correlated.For this purpose I first make a correlation matrix via cor() function and then cutoff correlations upper than %80.
+
+```{r}
+cormatrix<- cor(na.omit(pml_training2[sapply(pml_training2,is.numeric)]))
+dim(cormatrix)
+removecor<-findCorrelation(cormatrix, cutoff = 0.8, verbose =FALSE)
+final_training<-pml_training2[,-removecor]
+dim(final_training)
+```
+
+##Spliting data to training and cross validation sets
+
+Now after removing all the unnecessary variables we can proceed to spliting the training data to training nd cross validation sets
+
+```{r}
+
+intrain<-createDataPartition(final_training$classe,p=3/4,list=FALSE)
+train_set<-final_training[intrain,]
+cros_val_set<-final_training[-intrain,]
+
+```
+
+##Finding the best model that fits the data
+
+As we have 53 variables to predict with,we can not use a linear model,and we need to use modeling with with classification such as "Decision Tree" or "Random Forest".I will try these to models and then pick the best model after I examine them on cross validation dataset and verify their accuracy and out of sample error rate. 
+
+The first model I am going to try is Decision Tree :
+
+```{r}
+set.seed(2468)
+treemod<-train(classe~.,data=train_set,method='rpart')
+
+```
+To have a visual sense of what is going on in this model I am going to plot the prediction tree:
+
+```{r}
+library(rattle)
+fancyRpartPlot(treemod$finalModel)
+
+```
+
+based on this model I am going to predict "classe"" values in test dataset and see the accuracy of this model.The test data set I am using in this stage is not the final test set,rather it is part of the initial training data that I seprated for initial cross validation.
+
+```{r}
+tree_pred<-predict(treemod,newdata=cros_val_set)
+confusionMatrix(tree_pred,cros_val_set$classe)
+
+```
+
+As we can see the Accuracy of this model(%50) is not high enough.
+I will also calculate out of sample error which I expect to be rather large:
+
+```{r}
+missClass = function(values, prediction) {
+    sum(prediction != values)/length(values)
+}
+Tree_Out_of_sample_error = missClass(cros_val_set$classe, tree_pred)
+Tree_Out_of_sample_error
+
+```
+
+The out of sample error for thi model is almost %49 which is not promising!
+Therefore I am going to try Random Forest model is particularly well suited to handle a large number of inputs, especially when the interactions between variables are unknown.Also  random forest model can handle unscaled variables and categorical variables, which reduces the need for cleaning and transforming variables which are steps that can be subject to overfitting and noise.
+
+```{r}
+library(randomForest)
+set.seed(2468)
+rfmod<-randomForest(classe~.,data=train_set)
+```
+I want to know which predictors has the most importance in prediction,so I will make a variable importance plot.
+
+```{r}
+varImpPlot(rfmod,n.var=10,main = "Top 10 Important Variables in Random Forest Model")
+
+```
+
+Again based on this model I am going to predict classe values in cross validation dataset and see the accuracy of the model.
+
+```{r}
+rf_pred<-predict(rfmod,newdata=cros_val_set)
+confusionMatrix(rf_pred,cros_val_set$classe)
+```
+
+We can see from the confusion matrix that the non-diagonal elements of the matrix are mostly zero which means the predictions are almost the same as refrences in most of the cases.Also we can see that the "Accuracy"" is quite high!
+Also I am going to calculate out of sample error which I expect to be very low:
+```{r}
+missClass = function(values, prediction) {
+    sum(prediction != values)/length(values)
+}
+RF_Out_of_sample_error = missClass(cros_val_set$classe, rf_pred)
+RF_Out_of_sample_error
+```
+The out of sample error for this model is only %0.4 which is great!
+Based on these calculations I am going to finalise random forest model as the best fit model and use it for predicting the classe variable in main testing data.
+
+##Results
+
+The finl result comes out from predicting the values for "Classe" variable in the the main testing set. I will download the testing set,read it into R and then predict the "Classe"" values with Random Forest model.Then I will submit the finl results for grading.
+
+```{r}
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",destfile = "pml_testing.csv")
+pml_testing<-read.csv("pml_testing.csv",na.strings = c("","NA"))
+final_results<-predict(rfmod,newdata=pml_testing)
+print(final_results)
+```
+
+
+
